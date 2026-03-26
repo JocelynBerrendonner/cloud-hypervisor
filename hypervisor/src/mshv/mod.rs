@@ -831,14 +831,16 @@ impl cpu::Vcpu for MshvVcpu {
                 #[cfg(target_arch = "x86_64")]
                 hv_message_type_HVMSG_X64_CPUID_INTERCEPT => {
                     let info = x.to_cpuid_info().unwrap();
-                    info!("[MMIO-DIAG] VP exit: X64_CPUID_INTERCEPT, leaf_eax=0x{:x}", info.rax);
+                    info!("[MMIO-DIAG] VP exit: X64_CPUID_INTERCEPT, leaf_eax=0x{:x}", { info.rax });
                     debug!("cpuid eax: {:x}", { info.rax });
                     Ok(cpu::VmExit::Ignore)
                 }
                 #[cfg(target_arch = "x86_64")]
                 hv_message_type_HVMSG_X64_MSR_INTERCEPT => {
                     let info = x.to_msr_info().unwrap();
-                    info!("[MMIO-DIAG] VP exit: X64_MSR_INTERCEPT, msr=0x{:x}, access={}", info.msr_number, if info.header.intercept_access_type == 0 { "read" } else { "write" });
+                    let msr_num = { info.msr_number };
+                    let access_type = { info.header.intercept_access_type };
+                    info!("[MMIO-DIAG] VP exit: X64_MSR_INTERCEPT, msr=0x{:x}, access={}", msr_num, if access_type == 0 { "read" } else { "write" });
                     if info.header.intercept_access_type == 0 {
                         debug!("msr read: {:x}", { info.msr_number });
                     } else {
@@ -850,14 +852,14 @@ impl cpu::Vcpu for MshvVcpu {
                 hv_message_type_HVMSG_X64_EXCEPTION_INTERCEPT => {
                     //TODO: Handler for VMCALL here.
                     let info = x.to_exception_info().unwrap();
-                    info!("[MMIO-DIAG] VP exit: X64_EXCEPTION_INTERCEPT, vector={:?}", info.exception_vector);
+                    info!("[MMIO-DIAG] VP exit: X64_EXCEPTION_INTERCEPT, vector={:?}", { info.exception_vector });
                     debug!("Exception Info {:?}", { info.exception_vector });
                     Ok(cpu::VmExit::Ignore)
                 }
                 #[cfg(target_arch = "x86_64")]
                 hv_message_type_HVMSG_X64_APIC_EOI => {
                     let info = x.to_apic_eoi_info().unwrap();
-                    info!("[MMIO-DIAG] VP exit: X64_APIC_EOI, vp_index={}, interrupt_vector={}", info.vp_index, info.interrupt_vector);
+                    info!("[MMIO-DIAG] VP exit: X64_APIC_EOI, vp_index={}, interrupt_vector={}", { info.vp_index }, { info.interrupt_vector });
                     // The kernel should dispatch the EOI to the correct thread.
                     // Check the VP index is the same as the one we have.
                     assert!(info.vp_index == self.vp_index as u32);
