@@ -12,9 +12,7 @@ use std::sync::{Arc, RwLock};
 use anyhow::anyhow;
 #[cfg(target_arch = "x86_64")]
 use arc_swap::ArcSwap;
-#[cfg(feature = "sev_snp")]
-use log::info;
-use log::{debug, warn};
+use log::{debug, info, warn};
 use mshv_bindings::*;
 #[cfg(target_arch = "x86_64")]
 use mshv_ioctls::InterruptRequest;
