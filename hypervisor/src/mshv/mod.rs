@@ -579,8 +579,8 @@ impl cpu::Vcpu for MshvVcpu {
     #[allow(non_upper_case_globals)]
     fn run(&mut self) -> std::result::Result<cpu::VmExit, cpu::HypervisorCpuError> {
         match self.fd.run() {
-            Ok(x) => // [MMIO-DIAG] Log raw VP exit message type
-                info!("[MMIO-DIAG] VP exit: message_type=0x{:x}", (hv_message.header.message_type as u32));
+            Ok(x) => {
+                info!("[MMIO-DIAG] VP exit: message_type=0x{:x}", x.header.message_type as u32);
                 match x.header.message_type {
                 hv_message_type_HVMSG_X64_HALT => {
                     debug!("HALT");
@@ -589,6 +589,7 @@ impl cpu::Vcpu for MshvVcpu {
                 #[cfg(target_arch = "aarch64")]
                 hv_message_type_HVMSG_ARM64_RESET_INTERCEPT => {
                     let reset_msg = x.to_reset_intercept_msg().unwrap();
+                    info!("[MMIO-DIAG] VP exit: ARM64_RESET_INTERCEPT, reset_type={:?}", reset_msg.reset_type);
 
                     match reset_msg.reset_type {
                         hv_arm64_reset_type_HV_ARM64_RESET_TYPE_REBOOT => Ok(cpu::VmExit::Reset),
@@ -603,6 +604,7 @@ impl cpu::Vcpu for MshvVcpu {
                 }
                 hv_message_type_HVMSG_UNRECOVERABLE_EXCEPTION => {
                     warn!("TRIPLE FAULT");
+                    info!("[MMIO-DIAG] VP exit: UNRECOVERABLE_EXCEPTION (triple fault)");
                     Ok(cpu::VmExit::Shutdown)
                 }
                 #[cfg(target_arch = "x86_64")]
@@ -613,6 +615,7 @@ impl cpu::Vcpu for MshvVcpu {
                     let len = unsafe { access_info.__bindgen_anon_1.access_size() } as usize;
                     let is_write = info.header.intercept_access_type == 1;
                     let port = info.port_number;
+                    info!("[MMIO-DIAG] VP exit: X64_IO_PORT_INTERCEPT, port=0x{:x}, is_write={}, len={}", port, is_write, len);
                     let mut data: [u8; 4] = [0; 4];
                     let mut ret_rax = info.rax;
 
@@ -679,8 +682,7 @@ impl cpu::Vcpu for MshvVcpu {
                     let info = x.to_memory_info().unwrap();
                     let gva = info.guest_virtual_address;
                     let gpa = info.guest_physical_address;
-                    // [MMIO-DIAG] Log MMIO intercept GPA
-                    info!("[MMIO-DIAG] MMIO intercept: gpa=0x{:x}", gpa);
+                    info!("[MMIO-DIAG] VP exit: UNMAPPED_GPA, gva=0x{:x}, gpa=0x{:x}", gva, gpa);
 
 
                     debug!("Unmapped GPA exit: GVA {gva:x} GPA {gpa:x}");
@@ -716,6 +718,7 @@ impl cpu::Vcpu for MshvVcpu {
                     let insn_len = info.instruction_byte_count as usize;
                     let gva = info.guest_virtual_address;
                     let gpa = info.guest_physical_address;
+                    info!("[MMIO-DIAG] VP exit: msg_type={:?}, gva=0x{:x}, gpa=0x{:x}, insn_len={}", msg_type, gva, gpa, insn_len);
 
                     debug!("Exit ({msg_type:?}) GVA {gva:x} GPA {gpa:x}");
 
@@ -751,6 +754,7 @@ impl cpu::Vcpu for MshvVcpu {
                 hv_message_type_HVMSG_GPA_ATTRIBUTE_INTERCEPT => {
                     let info = x.to_gpa_attribute_info().unwrap();
                     let host_vis = info.__bindgen_anon_1.host_visibility();
+                    info!("[MMIO-DIAG] VP exit: GPA_ATTRIBUTE_INTERCEPT, host_visibility=0x{:x}", host_vis);
                     if host_vis >= HV_MAP_GPA_READABLE | HV_MAP_GPA_WRITABLE {
                         warn!("Ignored attribute intercept with full host visibility");
                         return Ok(cpu::VmExit::Ignore);
@@ -820,6 +824,7 @@ impl cpu::Vcpu for MshvVcpu {
                     let info = x.to_memory_info().unwrap();
                     let gva = info.guest_virtual_address;
                     let gpa = info.guest_physical_address;
+                    info!("[MMIO-DIAG] VP exit: UNACCEPTED_GPA, gva=0x{:x}, gpa=0x{:x}", gva, gpa);
 
                     Err(cpu::HypervisorCpuError::RunVcpu(anyhow!(
                         "Unhandled VCPU exit: Unaccepted GPA({gpa:x}) found at GVA({gva:x})",
@@ -828,12 +833,14 @@ impl cpu::Vcpu for MshvVcpu {
                 #[cfg(target_arch = "x86_64")]
                 hv_message_type_HVMSG_X64_CPUID_INTERCEPT => {
                     let info = x.to_cpuid_info().unwrap();
+                    info!("[MMIO-DIAG] VP exit: X64_CPUID_INTERCEPT, leaf_eax=0x{:x}", info.rax);
                     debug!("cpuid eax: {:x}", { info.rax });
                     Ok(cpu::VmExit::Ignore)
                 }
                 #[cfg(target_arch = "x86_64")]
                 hv_message_type_HVMSG_X64_MSR_INTERCEPT => {
                     let info = x.to_msr_info().unwrap();
+                    info!("[MMIO-DIAG] VP exit: X64_MSR_INTERCEPT, msr=0x{:x}, access={}", info.msr_number, if info.header.intercept_access_type == 0 { "read" } else { "write" });
                     if info.header.intercept_access_type == 0 {
                         debug!("msr read: {:x}", { info.msr_number });
                     } else {
@@ -845,12 +852,14 @@ impl cpu::Vcpu for MshvVcpu {
                 hv_message_type_HVMSG_X64_EXCEPTION_INTERCEPT => {
                     //TODO: Handler for VMCALL here.
                     let info = x.to_exception_info().unwrap();
+                    info!("[MMIO-DIAG] VP exit: X64_EXCEPTION_INTERCEPT, vector={:?}", info.exception_vector);
                     debug!("Exception Info {:?}", { info.exception_vector });
                     Ok(cpu::VmExit::Ignore)
                 }
                 #[cfg(target_arch = "x86_64")]
                 hv_message_type_HVMSG_X64_APIC_EOI => {
                     let info = x.to_apic_eoi_info().unwrap();
+                    info!("[MMIO-DIAG] VP exit: X64_APIC_EOI, vp_index={}, interrupt_vector={}", info.vp_index, info.interrupt_vector);
                     // The kernel should dispatch the EOI to the correct thread.
                     // Check the VP index is the same as the one we have.
                     assert!(info.vp_index == self.vp_index as u32);
@@ -874,6 +883,7 @@ impl cpu::Vcpu for MshvVcpu {
 
                     // SAFETY: Accessing a union element from bindgen generated bindings.
                     let ghcb_op = unsafe { ghcb_msr.__bindgen_anon_2.ghcb_info() as u32 };
+                    info!("[MMIO-DIAG] VP exit: X64_SEV_VMGEXIT_INTERCEPT, ghcb_msr=0x{:x}, ghcb_op=0x{:x}", info.ghcb_msr, ghcb_op);
                     // Sanity check on the header fields before handling other operations.
                     assert!(info.header.intercept_access_type == HV_INTERCEPT_ACCESS_EXECUTE as u8);
 
@@ -1217,6 +1227,7 @@ impl cpu::Vcpu for MshvVcpu {
                 exit => Err(cpu::HypervisorCpuError::RunVcpu(anyhow!(
                     "Unhandled VCPU exit {exit:?}"
                 ))),
+                }
             },
 
             Err(e) => match e.errno() {
