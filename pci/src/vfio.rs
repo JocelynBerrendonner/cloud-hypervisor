@@ -1645,11 +1645,19 @@ impl VfioPciDevice {
     ///   as user memory regions.
     /// * `mem_slot` - The closure to return a memory slot.
     pub fn map_mmio_regions(&mut self) -> Result<(), VfioPciError> {
+        info!(
+            "[MMIO-DIAG] map_mmio_regions: device={} bdf={}, num_regions={}",
+            self.device_path.display(), self.bdf, self.common.mmio_regions.len()
+        );
         let fd = self.device.as_raw_fd();
         // SAFETY: fd is guaranteed valid
         let fd = unsafe { BorrowedFd::borrow_raw(fd) };
         for region in self.common.mmio_regions.iter_mut() {
             let region_flags = self.device.get_region_flags(region.index);
+            info!(
+                "[MMIO-DIAG] map_mmio_regions: region index={} start=0x{:x} length=0x{:x} type={:?} flags=0x{:x}",
+                region.index, region.start.0, region.length, region.type_, region_flags
+            );
             if region_flags & VFIO_REGION_INFO_FLAG_MMAP != 0 {
                 let mut prot = 0;
                 if region_flags & VFIO_REGION_INFO_FLAG_READ != 0 {
@@ -1728,6 +1736,17 @@ impl VfioPciDevice {
                     }
                     .map_err(VfioPciError::CreateUserMemoryRegion)?;
 
+                    info!(
+                        "[MMIO-DIAG] map_mmio_regions: mapped sparse area: slot={} gpa=0x{:x} size=0x{:x} hva={:p} area_offset=0x{:x} mmap_offset=0x{:x} iommu_attached={}",
+                        user_memory_region.slot,
+                        user_memory_region.start,
+                        user_memory_region.mapping.len(),
+                        user_memory_region.mapping.addr(),
+                        area.offset,
+                        mmap_offset,
+                        self.iommu_attached,
+                    );
+
                     if !self.iommu_attached {
                         // vfio_dma_map should be unsafe but isn't.
                         #[allow(unused_unsafe)]
@@ -1745,20 +1764,39 @@ impl VfioPciDevice {
                             )
                         }
                         .map_err(|e| VfioPciError::DmaMap(e, self.device_path.clone(), self.bdf))?;
+                        info!(
+                            "[MMIO-DIAG] map_mmio_regions: vfio_dma_map OK: iova=0x{:x} size=0x{:x} hva={:p}",
+                            user_memory_region.start,
+                            user_memory_region.mapping.len(),
+                            user_memory_region.mapping.addr(),
+                        );
                     }
                     region.user_memory_regions.push(user_memory_region);
                 }
             }
         }
 
+        info!("[MMIO-DIAG] map_mmio_regions: completed successfully for device={}", self.device_path.display());
         Ok(())
     }
 
     pub fn unmap_mmio_regions(&mut self) {
+        info!(
+            "[MMIO-DIAG] unmap_mmio_regions: device={} bdf={}, num_regions={}",
+            self.device_path.display(), self.bdf, self.common.mmio_regions.len()
+        );
         for region in self.common.mmio_regions.iter_mut() {
+            info!(
+                "[MMIO-DIAG] unmap_mmio_regions: region index={} start=0x{:x} length=0x{:x} type={:?} num_user_mem_regions={}",
+                region.index, region.start.0, region.length, region.type_, region.user_memory_regions.len()
+            );
             for user_memory_region in region.user_memory_regions.drain(..) {
                 let len = user_memory_region.mapping.len();
                 let host_addr = user_memory_region.mapping.addr();
+                info!(
+                    "[MMIO-DIAG] unmap_mmio_regions: unmapping slot={} gpa=0x{:x} size=0x{:x} hva={:p} iommu_attached={}",
+                    user_memory_region.slot, user_memory_region.start, len, host_addr, self.iommu_attached
+                );
                 // Unmap from vfio container
                 if !self.iommu_attached
                     && let Err(e) = self
