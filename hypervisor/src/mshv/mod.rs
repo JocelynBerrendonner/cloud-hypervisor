@@ -716,8 +716,12 @@ impl cpu::Vcpu for MshvVcpu {
                     let insn_len = info.instruction_byte_count as usize;
                     let gva = info.guest_virtual_address;
                     let gpa = info.guest_physical_address;
-                    info!("[MMIO-DIAG] VP exit: msg_type={:?}, gva=0x{:x}, gpa=0x{:x}, insn_len={}", msg_type, gva, gpa, insn_len);
 
+                    if msg_type == hv_message_type_HVMSG_GPA_INTERCEPT {
+                        info!("[MMIO-DIAG] VP exit: HVMSG_GPA_INTERCEPT msg_type={:?}, gva=0x{:x}, gpa=0x{:x}, insn_len={}", msg_type, gva, gpa, insn_len);
+                    } else {
+                        info!("[MMIO-DIAG] VP exit: HVMSG_UNMAPPED_GPA msg_type={:?}, gva=0x{:x}, gpa=0x{:x}, insn_len={}", msg_type, gva, gpa, insn_len);
+                    }
                     debug!("Exit ({msg_type:?}) GVA {gva:x} GPA {gpa:x}");
 
                     let mut context = MshvEmulatorContext {
