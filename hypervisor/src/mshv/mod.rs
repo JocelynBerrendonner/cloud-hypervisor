@@ -579,7 +579,9 @@ impl cpu::Vcpu for MshvVcpu {
     #[allow(non_upper_case_globals)]
     fn run(&mut self) -> std::result::Result<cpu::VmExit, cpu::HypervisorCpuError> {
         match self.fd.run() {
-            Ok(x) => match x.header.message_type {
+            Ok(x) => // [MMIO-DIAG] Log raw VP exit message type
+                info!("[MMIO-DIAG] VP exit: message_type=0x{:x}", (hv_message.header.message_type as u32));
+                match x.header.message_type {
                 hv_message_type_HVMSG_X64_HALT => {
                     debug!("HALT");
                     Ok(cpu::VmExit::Reset)
@@ -677,6 +679,9 @@ impl cpu::Vcpu for MshvVcpu {
                     let info = x.to_memory_info().unwrap();
                     let gva = info.guest_virtual_address;
                     let gpa = info.guest_physical_address;
+                    // [MMIO-DIAG] Log MMIO intercept GPA
+                    info!("[MMIO-DIAG] MMIO intercept: gpa=0x{:x}", gpa);
+
 
                     debug!("Unmapped GPA exit: GVA {gva:x} GPA {gpa:x}");
 

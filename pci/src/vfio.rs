@@ -445,6 +445,21 @@ impl VfioDeviceWrapper {
 impl Vfio for VfioDeviceWrapper {
     fn region_read(&self, index: u32, offset: u64, data: &mut [u8]) {
         self.device.region_read(index, data, offset);
+                    // [VFIO-DIAG] Log data returned from region_read
+                    if data.len() >= 4 {
+                        let _diag_val = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+                        info!(
+                            "[VFIO-DIAG] read_bar REGION_READ: addr=0x{:x} len={} data[0..4]=0x{:08x}{}",
+                            base + offset, data.len(), _diag_val,
+                            if _diag_val == 0xFFFFFFFF { " *** ALL-Fs ***" } else { "" },
+                        );
+                    } else {
+                        info!(
+                            "[VFIO-DIAG] read_bar REGION_READ: addr=0x{:x} len={} data={:02x?}",
+                            base + offset, data.len(), &data[..],
+                        );
+                    }
+
     }
 
     fn region_write(&self, index: u32, offset: u64, data: &[u8]) {
@@ -1211,7 +1226,22 @@ impl VfioCommon {
     }
 
     pub(crate) fn read_bar(&mut self, base: u64, offset: u64, data: &mut [u8]) {
+        // [VFIO-DIAG] Log every read_bar call
+        let _diag_addr = base + offset;
+        let _diag_len = data.len();
+        info!(
+            "[VFIO-DIAG] read_bar ENTRY: base=0x{:x} offset=0x{:x} addr=0x{:x} len={}",
+            base, offset, _diag_addr, _diag_len,
+        );
+
         let addr = base + offset;
+        let _diag_region_found = self.find_region(addr).is_some();
+        if !_diag_region_found {
+            info!(
+                "[VFIO-DIAG] find_region MISS: addr=0x{:x} (NO BAR region covers this address!)",
+                addr,
+            );
+        }
         if let Some(region) = self.find_region(addr) {
             let offset = addr - region.start.raw_value();
 
@@ -1877,6 +1907,23 @@ impl PciDevice for VfioPciDevice {
     }
 
     fn write_bar(&mut self, base: u64, offset: u64, data: &[u8]) -> Option<Arc<Barrier>> {
+        // [VFIO-DIAG] Log every write_bar call
+        {
+            let _diag_addr = base + offset;
+            if data.len() >= 4 {
+                let _diag_val = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+                info!(
+                    "[VFIO-DIAG] write_bar: base=0x{:x} offset=0x{:x} addr=0x{:x} len={} data=0x{:08x}",
+                    base, offset, _diag_addr, data.len(), _diag_val,
+                );
+            } else {
+                info!(
+                    "[VFIO-DIAG] write_bar: base=0x{:x} offset=0x{:x} addr=0x{:x} len={} data={:02x?}",
+                    base, offset, _diag_addr, data.len(), data,
+                );
+            }
+        }
+
         self.common.write_bar(base, offset, data)
     }
 
