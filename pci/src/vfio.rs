@@ -786,6 +786,16 @@ impl VfioCommon {
                 }
             };
 
+            info!(
+                "[MMIO-DIAG] allocate_bars: bar_id={} type={:?} bar_addr=0x{:x} size=0x{:x} prefetchable={:?} restored={}",
+                bar_id,
+                region_type,
+                bar_addr.raw_value(),
+                region_size,
+                prefetchable,
+                restored_bar_addr.is_some(),
+            );
+
             // We can now build our BAR configuration block.
             let bar = PciBarConfiguration::default()
                 .set_index(bar_id as usize)
@@ -1940,7 +1950,17 @@ impl PciDevice for VfioPciDevice {
     }
 
     fn read_bar(&mut self, base: u64, offset: u64, data: &mut [u8]) {
+        info!(
+            "[MMIO-DIAG] read_bar: base=0x{:x} offset=0x{:x} addr=0x{:x} len={}",
+            base, offset, base + offset, data.len(),
+        );
         self.common.read_bar(base, offset, data);
+        if data.len() <= 8 {
+            info!(
+                "[MMIO-DIAG] read_bar result: addr=0x{:x} data={:02x?}",
+                base + offset, data,
+            );
+        }
     }
 
     fn write_bar(&mut self, base: u64, offset: u64, data: &[u8]) -> Option<Arc<Barrier>> {
@@ -1965,6 +1985,10 @@ impl PciDevice for VfioPciDevice {
     }
 
     fn move_bar(&mut self, old_base: u64, new_base: u64) -> Result<(), io::Error> {
+        info!(
+            "[MMIO-DIAG] move_bar: device={} old_base=0x{:x} new_base=0x{:x}",
+            self.device_path.display(), old_base, new_base,
+        );
         for region in self.common.mmio_regions.iter_mut() {
             if region.start.raw_value() == old_base {
                 region.start = GuestAddress(new_base);

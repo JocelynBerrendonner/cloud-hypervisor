@@ -12,7 +12,7 @@ use std::sync::{Arc, RwLock};
 use anyhow::anyhow;
 #[cfg(target_arch = "x86_64")]
 use arc_swap::ArcSwap;
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use mshv_bindings::*;
 #[cfg(target_arch = "x86_64")]
 use mshv_ioctls::InterruptRequest;
@@ -1975,6 +1975,17 @@ impl vm::Vm for MshvVm {
             userspace_addr: (userspace_addr as usize).try_into().unwrap(),
             ..Default::default()
         };
+
+        info!(
+            "[MMIO-DIAG] create_user_memory_region: guest_pfn=0x{:x} guest_phys_addr=0x{:x} size=0x{:x} hva=0x{:x} flags=0x{:x} readonly={}",
+            user_memory_region.guest_pfn,
+            guest_phys_addr,
+            memory_size,
+            userspace_addr as u64,
+            flags,
+            readonly,
+        );
+
         // No matter read only or not we keep track the slots.
         // For readonly hypervisor can enable the dirty bits,
         // but a VM exit happens before setting the dirty bits
@@ -1986,10 +1997,22 @@ impl vm::Vm for MshvVm {
             },
         );
 
-        self.fd
+        let result = self.fd
             .map_user_memory(user_memory_region)
-            .map_err(|e| vm::HypervisorVmError::CreateUserMemory(e.into()))?;
-        Ok(())
+            .map_err(|e| vm::HypervisorVmError::CreateUserMemory(e.into()));
+
+        match &result {
+            Ok(()) => info!(
+                "[MMIO-DIAG] create_user_memory_region: SUCCESS guest_pfn=0x{:x}",
+                user_memory_region.guest_pfn,
+            ),
+            Err(e) => error!(
+                "[MMIO-DIAG] create_user_memory_region: FAILED guest_pfn=0x{:x} err={:?}",
+                user_memory_region.guest_pfn, e,
+            ),
+        }
+
+        result
     }
 
     /// Removes a guest physical memory region.
@@ -2019,6 +2042,16 @@ impl vm::Vm for MshvVm {
             userspace_addr: (userspace_addr as usize).try_into().unwrap(),
             ..Default::default()
         };
+
+        info!(
+            "[MMIO-DIAG] remove_user_memory_region: guest_pfn=0x{:x} guest_phys_addr=0x{:x} size=0x{:x} hva=0x{:x} flags=0x{:x}",
+            user_memory_region.guest_pfn,
+            guest_phys_addr,
+            memory_size,
+            userspace_addr as u64,
+            flags,
+        );
+
         // Remove the corresponding entry from "self.dirty_log_slots" if needed
         self.dirty_log_slots
             .write()

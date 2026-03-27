@@ -450,15 +450,24 @@ impl VmOps for VmOpsHandler {
 
     fn mmio_read(&self, gpa: u64, data: &mut [u8]) -> result::Result<(), HypervisorVmError> {
         if let Err(vm_device::BusError::MissingAddressRange) = self.mmio_bus.read(gpa, data) {
-            info!("Guest MMIO read to unregistered address 0x{gpa:x}");
+            info!("[MMIO-DIAG] mmio_bus read MISS: gpa=0x{:x} len={}", gpa, data.len());
+        } else if data.len() <= 8 {
+            info!("[MMIO-DIAG] mmio_bus read HIT: gpa=0x{:x} len={} data={:02x?}", gpa, data.len(), data);
+        } else {
+            info!("[MMIO-DIAG] mmio_bus read HIT: gpa=0x{:x} len={}", gpa, data.len());
         }
         Ok(())
     }
 
     fn mmio_write(&self, gpa: u64, data: &[u8]) -> result::Result<(), HypervisorVmError> {
+        if data.len() <= 8 {
+            info!("[MMIO-DIAG] mmio_bus write: gpa=0x{:x} len={} data={:02x?}", gpa, data.len(), data);
+        } else {
+            info!("[MMIO-DIAG] mmio_bus write: gpa=0x{:x} len={}", gpa, data.len());
+        }
         match self.mmio_bus.write(gpa, data) {
             Err(vm_device::BusError::MissingAddressRange) => {
-                info!("Guest MMIO write to unregistered address 0x{gpa:x}");
+                info!("[MMIO-DIAG] mmio_bus write MISS: gpa=0x{:x}", gpa);
             }
             Ok(Some(barrier)) => {
                 info!("Waiting for barrier");

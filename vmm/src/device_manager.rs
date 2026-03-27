@@ -3823,6 +3823,15 @@ impl DeviceManager {
         let (pci_segment_id, pci_device_bdf, resources) =
             self.pci_resources(&vfio_name, device_cfg.pci_segment)?;
 
+        info!(
+            "[MMIO-DIAG] add_vfio_device: name={} path={} bdf={} segment={} iommu={}",
+            vfio_name,
+            device_cfg.path.display(),
+            pci_device_bdf,
+            pci_segment_id,
+            device_cfg.iommu,
+        );
+
         let mut needs_dma_mapping = false;
 
         // Here we create a new VFIO container for two reasons. Either this is
@@ -3954,7 +3963,16 @@ impl DeviceManager {
             .map_mmio_regions()
             .map_err(DeviceManagerError::VfioMapRegion)?;
 
+        info!(
+            "[MMIO-DIAG] add_vfio_device: map_mmio_regions completed for bdf={}",
+            pci_device_bdf,
+        );
+
         for mmio_region in vfio_pci_device.lock().unwrap().mmio_regions() {
+            info!(
+                "[MMIO-DIAG] add_vfio_device: registered mmio_region start=0x{:x} len=0x{:x}",
+                mmio_region.start.0, mmio_region.length,
+            );
             self.mmio_regions.lock().unwrap().push(mmio_region);
         }
 

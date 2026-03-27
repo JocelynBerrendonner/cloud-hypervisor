@@ -6,6 +6,7 @@
 use anyhow::anyhow;
 use iced_x86::Register;
 use log::debug;
+use log::info;
 use mshv_bindings::*;
 
 use crate::arch::emulator::{PlatformEmulator, PlatformError};
@@ -49,9 +50,19 @@ impl MshvEmulatorContext<'_> {
         if let Some(vm_ops) = &self.vcpu.vm_ops
             && vm_ops.guest_mem_read(gpa, data).is_err()
         {
+            info!(
+                "[MMIO-DIAG] emulator read: gva=0x{:x} gpa=0x{:x} len={} (MMIO path)",
+                gva, gpa, data.len(),
+            );
             vm_ops
                 .mmio_read(gpa, data)
                 .map_err(|e| PlatformError::MemoryReadFailure(e.into()))?;
+            if data.len() <= 8 {
+                info!(
+                    "[MMIO-DIAG] emulator read result: gpa=0x{:x} data={:02x?}",
+                    gpa, data,
+                );
+            }
         }
 
         Ok(())
@@ -99,6 +110,17 @@ impl MshvEmulatorContext<'_> {
         if let Some(vm_ops) = &self.vcpu.vm_ops
             && vm_ops.guest_mem_write(gpa, data).is_err()
         {
+            if data.len() <= 8 {
+                info!(
+                    "[MMIO-DIAG] emulator write: gva=0x{:x} gpa=0x{:x} len={} data={:02x?} (MMIO path)",
+                    gva, gpa, data.len(), data,
+                );
+            } else {
+                info!(
+                    "[MMIO-DIAG] emulator write: gva=0x{:x} gpa=0x{:x} len={} (MMIO path)",
+                    gva, gpa, data.len(),
+                );
+            }
             vm_ops
                 .mmio_write(gpa, data)
                 .map_err(|e| PlatformError::MemoryWriteFailure(e.into()))?;
