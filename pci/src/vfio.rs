@@ -203,9 +203,17 @@ impl Interrupt {
     fn update_msix(&mut self, offset: u64, data: &[u8]) -> Option<InterruptUpdateAction> {
         if let Some(msix) = &mut self.msix {
             let action = msix.update(offset, data);
+            let action_str = match &action {
+                Some(InterruptUpdateAction::EnableMsix) => "EnableMsix",
+                Some(InterruptUpdateAction::DisableMsix) => "DisableMsix",
+                Some(InterruptUpdateAction::EnableMsi) => "EnableMsi",
+                Some(InterruptUpdateAction::DisableMsi) => "DisableMsi",
+                None => "None",
+                _ => "Other",
+            };
             info!(
-                "[MMIO-DIAG] Interrupt::update_msix: offset=0x{:x} data={:02x?} action={:?}",
-                offset, data, action,
+                "[MMIO-DIAG] Interrupt::update_msix: offset=0x{:x} data={:02x?} action={}",
+                offset, data, action_str,
             );
             return action;
         }
@@ -1358,9 +1366,14 @@ impl VfioCommon {
         // trigger a VFIO MSI or MSI-X toggle.
         if let Some((cap_id, cap_base)) = self.interrupt.accessed(reg) {
             let cap_offset: u64 = reg - cap_base + offset;
+            let cap_name = match cap_id {
+                PciCapabilityId::MessageSignalledInterrupts => "MSI",
+                PciCapabilityId::MsiX => "MSI-X",
+                _ => "Other",
+            };
             info!(
-                "[MMIO-DIAG] write_config_register: capability access cap_id={:?} cap_base=0x{:x} cap_offset=0x{:x}",
-                cap_id, cap_base, cap_offset,
+                "[MMIO-DIAG] write_config_register: capability access cap_id={} cap_base=0x{:x} cap_offset=0x{:x}",
+                cap_name, cap_base, cap_offset,
             );
             match cap_id {
                 PciCapabilityId::MessageSignalledInterrupts => {
@@ -1428,17 +1441,19 @@ impl VfioCommon {
         if let Some(id) = self.get_msix_cap_idx() {
             let msix = self.interrupt.msix.as_mut().unwrap();
             if reg_idx * 4 == id + 4 {
+                let table_val = msix.cap.table;
                 info!(
                     "[MMIO-DIAG] read_config_register: reg_idx={} (0x{:x}) -> 0x{:08x} [LOCAL MSI-X table]",
-                    reg_idx, reg_idx * 4, msix.cap.table,
+                    reg_idx, reg_idx * 4, table_val,
                 );
-                return msix.cap.table;
+                return table_val;
             } else if reg_idx * 4 == id + 8 {
+                let pba_val = msix.cap.pba;
                 info!(
                     "[MMIO-DIAG] read_config_register: reg_idx={} (0x{:x}) -> 0x{:08x} [LOCAL MSI-X PBA]",
-                    reg_idx, reg_idx * 4, msix.cap.pba,
+                    reg_idx, reg_idx * 4, pba_val,
                 );
-                return msix.cap.pba;
+                return pba_val;
             }
         }
 
