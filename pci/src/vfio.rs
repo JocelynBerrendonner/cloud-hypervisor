@@ -209,7 +209,6 @@ impl Interrupt {
                 Some(InterruptUpdateAction::EnableMsi) => "EnableMsi",
                 Some(InterruptUpdateAction::DisableMsi) => "DisableMsi",
                 None => "None",
-                _ => "Other",
             };
             info!(
                 "[MMIO-DIAG] Interrupt::update_msix: offset=0x{:x} data={:02x?} action={}",
