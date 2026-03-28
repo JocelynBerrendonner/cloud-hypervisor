@@ -1749,10 +1749,21 @@ impl MshvVm {
     ///
     /// See the documentation for `MSHV_CREATE_DEVICE`.
     fn create_device(&self, device: &mut CreateDevice) -> vm::Result<VfioDeviceFd> {
+        info!(
+            "[MMIO-DIAG] create_device: type={} flags={}",
+            device.type_, device.flags
+        );
         let device_fd = self
             .fd
             .create_device(device)
-            .map_err(|e| vm::HypervisorVmError::CreateDevice(e.into()))?;
+            .map_err(|e| {
+                error!("[MMIO-DIAG] create_device: MSHV_CREATE_DEVICE ioctl FAILED: {:?}", e);
+                vm::HypervisorVmError::CreateDevice(e.into())
+            })?;
+        info!(
+            "[MMIO-DIAG] create_device: SUCCESS fd={}",
+            device.fd
+        );
         Ok(VfioDeviceFd::new_from_mshv(device_fd))
     }
 
@@ -2071,8 +2082,16 @@ impl vm::Vm for MshvVm {
             flags: 0,
         };
 
-        self.create_device(&mut vfio_dev)
-            .map_err(|e| vm::HypervisorVmError::CreatePassthroughDevice(e.into()))
+        info!("[MMIO-DIAG] create_passthrough_device: calling create_device with MSHV_DEV_TYPE_VFIO");
+        let result = self.create_device(&mut vfio_dev)
+            .map_err(|e| {
+                error!("[MMIO-DIAG] create_passthrough_device: FAILED: {:?}", e);
+                vm::HypervisorVmError::CreatePassthroughDevice(e.into())
+            });
+        if result.is_ok() {
+            info!("[MMIO-DIAG] create_passthrough_device: SUCCESS");
+        }
+        result
     }
 
     ///

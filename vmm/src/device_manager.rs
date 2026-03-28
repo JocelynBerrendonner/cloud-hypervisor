@@ -3782,11 +3782,27 @@ impl DeviceManager {
         // If the passthrough device has not been created yet, it is created
         // here and stored in the DeviceManager structure for future needs.
         if self.passthrough_device.is_none() {
+            info!(
+                "[MMIO-DIAG] add_passthrough_device: no passthrough_device yet, creating for path={}",
+                device_cfg.path.display()
+            );
             self.passthrough_device = Some(
                 self.address_manager
                     .vm
                     .create_passthrough_device()
-                    .map_err(|e| DeviceManagerError::CreatePassthroughDevice(e.into()))?,
+                    .map_err(|e| {
+                        error!(
+                            "[MMIO-DIAG] add_passthrough_device: create_passthrough_device FAILED: {:?}",
+                            e
+                        );
+                        DeviceManagerError::CreatePassthroughDevice(e.into())
+                    })?,
+            );
+            info!("[MMIO-DIAG] add_passthrough_device: passthrough_device created successfully");
+        } else {
+            info!(
+                "[MMIO-DIAG] add_passthrough_device: reusing existing passthrough_device for path={}",
+                device_cfg.path.display()
             );
         }
 
@@ -4059,7 +4075,15 @@ impl DeviceManager {
         let mut devices = self.config.lock().unwrap().devices.take();
 
         if let Some(device_list_cfg) = &mut devices {
+            info!(
+                "[MMIO-DIAG] add_vfio_devices: processing {} device(s)",
+                device_list_cfg.len()
+            );
             for device_cfg in device_list_cfg.iter_mut() {
+                info!(
+                    "[MMIO-DIAG] add_vfio_devices: adding device path={}",
+                    device_cfg.path.display()
+                );
                 let (device_id, _) = self.add_passthrough_device(device_cfg)?;
                 if device_cfg.iommu && self.iommu_device.is_some() {
                     iommu_attached_device_ids.push(device_id);
