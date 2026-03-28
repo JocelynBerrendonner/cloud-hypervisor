@@ -203,6 +203,10 @@ impl Interrupt {
     fn update_msix(&mut self, offset: u64, data: &[u8]) -> Option<InterruptUpdateAction> {
         if let Some(msix) = &mut self.msix {
             let action = msix.update(offset, data);
+            info!(
+                "[MMIO-DIAG] Interrupt::update_msix: offset=0x{:x} data={:02x?} action={:?}",
+                offset, data, action,
+            );
             return action;
         }
 
@@ -1144,7 +1148,12 @@ impl VfioCommon {
     pub(crate) fn enable_msix(&self) -> Result<(), VfioPciError> {
         if let Some(msix) = &self.interrupt.msix {
             let mut irq_fds: Vec<EventFd> = Vec::new();
-            for i in 0..msix.bar.table_entries.len() {
+            let num_entries = msix.bar.table_entries.len();
+            info!(
+                "[MMIO-DIAG] VfioCommon::enable_msix: num_table_entries={}",
+                num_entries,
+            );
+            for i in 0..num_entries {
                 if let Some(eventfd) = msix.interrupt_source_group.notifier(i as InterruptIndex) {
                     irq_fds.push(eventfd);
                 } else {
@@ -1161,6 +1170,7 @@ impl VfioCommon {
     }
 
     pub(crate) fn disable_msix(&self) {
+        info!("[MMIO-DIAG] VfioCommon::disable_msix");
         if let Err(e) = self.vfio_wrapper.disable_msix() {
             error!("Could not disable MSI-X: {e}");
         }
@@ -1206,6 +1216,10 @@ impl VfioCommon {
     }
 
     fn update_msix_capabilities(&mut self, offset: u64, data: &[u8]) -> Result<(), VfioPciError> {
+        info!(
+            "[MMIO-DIAG] update_msix_capabilities: offset=0x{:x} data={:02x?}",
+            offset, data,
+        );
         match self.interrupt.update_msix(offset, data) {
             Some(InterruptUpdateAction::EnableMsix) => {
                 // Disable INTx before we can enable MSI-X
@@ -1278,6 +1292,10 @@ impl VfioCommon {
         data: &[u8],
     ) -> Option<Arc<Barrier>> {
         let addr = base + offset;
+        info!(
+            "[MMIO-DIAG] VfioCommon::write_bar: base=0x{:x} offset=0x{:x} addr=0x{:x} len={} data={:02x?}",
+            base, offset, addr, data.len(), &data[..std::cmp::min(data.len(), 8)],
+        );
         if let Some(region) = self.find_region(addr) {
             let offset = addr - region.start.raw_value();
 
@@ -1307,12 +1325,21 @@ impl VfioCommon {
         offset: u64,
         data: &[u8],
     ) -> (Vec<BarReprogrammingParams>, Option<Arc<Barrier>>) {
+        info!(
+            "[MMIO-DIAG] write_config_register: reg_idx={} (0x{:x}) offset={} data={:02x?}",
+            reg_idx, reg_idx * 4, offset, data,
+        );
+
         // When the guest wants to write to a BAR, we trap it into
         // our local configuration space. We're not reprogramming
         // VFIO device.
         if (PCI_CONFIG_BAR0_INDEX..PCI_CONFIG_BAR0_INDEX + BAR_NUMS).contains(&reg_idx)
             || reg_idx == PCI_ROM_EXP_BAR_INDEX
         {
+            info!(
+                "[MMIO-DIAG] write_config_register: reg_idx={} -> LOCAL BAR cache write",
+                reg_idx,
+            );
             // We keep our local cache updated with the BARs.
             // We'll read it back from there when the guest is asking
             // for BARs (see read_config_register()).
@@ -1331,6 +1358,10 @@ impl VfioCommon {
         // trigger a VFIO MSI or MSI-X toggle.
         if let Some((cap_id, cap_base)) = self.interrupt.accessed(reg) {
             let cap_offset: u64 = reg - cap_base + offset;
+            info!(
+                "[MMIO-DIAG] write_config_register: capability access cap_id={:?} cap_base=0x{:x} cap_offset=0x{:x}",
+                cap_id, cap_base, cap_offset,
+            );
             match cap_id {
                 PciCapabilityId::MessageSignalledInterrupts => {
                     if let Err(e) = self.update_msi_capabilities(cap_offset, data) {
@@ -1385,14 +1416,28 @@ impl VfioCommon {
         if (PCI_CONFIG_BAR0_INDEX..PCI_CONFIG_BAR0_INDEX + BAR_NUMS).contains(&reg_idx)
             || reg_idx == PCI_ROM_EXP_BAR_INDEX
         {
-            return self.configuration.read_reg(reg_idx);
+            let val = self.configuration.read_reg(reg_idx);
+            info!(
+                "[MMIO-DIAG] read_config_register: reg_idx={} (0x{:x}) -> 0x{:08x} [LOCAL BAR cache]{}",
+                reg_idx, reg_idx * 4, val,
+                if val == 0xFFFFFFFF { " *** ALL-Fs ***" } else { "" },
+            );
+            return val;
         }
 
         if let Some(id) = self.get_msix_cap_idx() {
             let msix = self.interrupt.msix.as_mut().unwrap();
             if reg_idx * 4 == id + 4 {
+                info!(
+                    "[MMIO-DIAG] read_config_register: reg_idx={} (0x{:x}) -> 0x{:08x} [LOCAL MSI-X table]",
+                    reg_idx, reg_idx * 4, msix.cap.table,
+                );
                 return msix.cap.table;
             } else if reg_idx * 4 == id + 8 {
+                info!(
+                    "[MMIO-DIAG] read_config_register: reg_idx={} (0x{:x}) -> 0x{:08x} [LOCAL MSI-X PBA]",
+                    reg_idx, reg_idx * 4, msix.cap.pba,
+                );
                 return msix.cap.pba;
             }
         }
@@ -1410,7 +1455,19 @@ impl VfioCommon {
         let mut value = self.vfio_wrapper.read_config_dword((reg_idx * 4) as u32) & mask;
 
         if let Some(config_patch) = self.patches.get(&reg_idx) {
+            let raw = value;
             value = (value & !config_patch.mask) | config_patch.patch;
+            info!(
+                "[MMIO-DIAG] read_config_register: reg_idx={} (0x{:x}) -> 0x{:08x} [VFIO+PATCHED raw=0x{:08x}]{}",
+                reg_idx, reg_idx * 4, value, raw,
+                if value == 0xFFFFFFFF { " *** ALL-Fs ***" } else { "" },
+            );
+        } else {
+            info!(
+                "[MMIO-DIAG] read_config_register: reg_idx={} (0x{:x}) -> 0x{:08x} [VFIO device]{}",
+                reg_idx, reg_idx * 4, value,
+                if value == 0xFFFFFFFF { " *** ALL-Fs ***" } else { "" },
+            );
         }
 
         value
@@ -1532,6 +1589,10 @@ impl VfioPciDevice {
         x_nv_gpudirect_clique: Option<u8>,
         device_path: PathBuf,
     ) -> Result<Self, VfioPciError> {
+        info!(
+            "[MMIO-DIAG] VfioPciDevice::new: id={} bdf={} iommu_attached={} path={} nv_clique={:?}",
+            id, bdf, iommu_attached, device_path.display(), x_nv_gpudirect_clique,
+        );
         let device = Arc::new(device);
         device.reset();
 

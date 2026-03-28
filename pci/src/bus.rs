@@ -10,7 +10,7 @@ use std::ops::DerefMut;
 use std::sync::{Arc, Barrier, Mutex};
 
 use byteorder::{ByteOrder, LittleEndian};
-use log::error;
+use log::{error, info};
 use thiserror::Error;
 use vm_device::{Bus, BusDevice, BusDeviceSync};
 
@@ -235,7 +235,7 @@ impl PciConfigIo {
             return 0xffff_ffff;
         }
 
-        self.pci_bus
+        let value = self.pci_bus
             .as_ref()
             .lock()
             .unwrap()
@@ -243,7 +243,13 @@ impl PciConfigIo {
             .get(&(device as u32))
             .map_or(0xffff_ffff, |d| {
                 d.lock().unwrap().read_config_register(register)
-            })
+            });
+        info!(
+            "[MMIO-DIAG] PciConfigIo::config_space_read: bus={} dev={} func={} reg={} (0x{:x}) -> 0x{:08x}{}",
+            bus, device, function, register, register * 4, value,
+            if value == 0xffff_ffff { " *** ALL-Fs ***" } else { "" },
+        );
+        value
     }
 
     pub fn config_space_write(&mut self, offset: u64, data: &[u8]) -> Option<Arc<Barrier>> {
@@ -263,6 +269,11 @@ impl PciConfigIo {
         if bus != 0 {
             return None;
         }
+
+        info!(
+            "[MMIO-DIAG] PciConfigIo::config_space_write: bus={} dev={} reg={} (0x{:x}) offset={} data={:02x?}",
+            bus, device, register, register * 4, offset, data,
+        );
 
         let pci_bus = self.pci_bus.as_ref().lock().unwrap();
         if let Some(d) = pci_bus.devices.get(&(device as u32)) {
@@ -367,14 +378,20 @@ impl PciConfigMmio {
             return 0xffff_ffff;
         }
 
-        self.pci_bus
+        let value = self.pci_bus
             .lock()
             .unwrap()
             .devices
             .get(&(device as u32))
             .map_or(0xffff_ffff, |d| {
                 d.lock().unwrap().read_config_register(register)
-            })
+            });
+        info!(
+            "[MMIO-DIAG] PciConfigMmio::config_space_read: bus={} dev={} reg={} (0x{:x}) -> 0x{:08x}{}",
+            bus, device, register, register * 4, value,
+            if value == 0xffff_ffff { " *** ALL-Fs ***" } else { "" },
+        );
+        value
     }
 
     fn config_space_write(&mut self, config_address: u32, offset: u64, data: &[u8]) {
@@ -383,6 +400,11 @@ impl PciConfigMmio {
         }
 
         let (bus, device, _function, register) = parse_mmio_config_address(config_address);
+
+        info!(
+            "[MMIO-DIAG] PciConfigMmio::config_space_write: bus={} dev={} reg={} (0x{:x}) offset={} data={:02x?}",
+            bus, device, register, register * 4, offset, data,
+        );
 
         // Only support one bus.
         if bus != 0 {
