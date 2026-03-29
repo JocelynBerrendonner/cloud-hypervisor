@@ -7,7 +7,15 @@ use anyhow::anyhow;
 use iced_x86::Register;
 use log::debug;
 use log::info;
+use log::warn;
 use mshv_bindings::*;
+use std::cell::Cell;
+
+thread_local! {
+    static LAST_MMIO_READ_GPA: Cell<u64> = Cell::new(0);
+    static MMIO_READ_COUNT: Cell<u64> = Cell::new(0);
+    static LAST_MMIO_READ_DATA: Cell<u64> = Cell::new(0);
+}
 
 use crate::arch::emulator::{PlatformEmulator, PlatformError};
 use crate::arch::x86::emulator::{CpuStateManager, EmulatorCpuState};
@@ -63,6 +71,45 @@ impl MshvEmulatorContext<'_> {
                     gpa, data,
                 );
             }
+
+            // Polling detector: track repeated reads to the same GPA
+            let data_val = {
+                let mut buf = [0u8; 8];
+                let n = data.len().min(8);
+                buf[..n].copy_from_slice(&data[..n]);
+                u64::from_le_bytes(buf)
+            };
+            LAST_MMIO_READ_GPA.with(|last| {
+                MMIO_READ_COUNT.with(|count| {
+                    LAST_MMIO_READ_DATA.with(|last_data| {
+                        if last.get() == gpa {
+                            let c = count.get() + 1;
+                            count.set(c);
+                            last_data.set(data_val);
+                            if c == 10 || c == 100 || c == 1000 || c % 10000 == 0 {
+                                warn!(
+                                    "[MMIO-DIAG] POLL DETECTED: gpa=0x{:x} page_offset=0x{:x} \
+                                     read #{} times, data=0x{:x} all_ff={}",
+                                    gpa, gpa & 0xFFF, c, data_val,
+                                    data_val == u64::MAX || (data.len() == 4 && data_val as u32 == u32::MAX),
+                                );
+                            }
+                        } else {
+                            if count.get() > 5 {
+                                warn!(
+                                    "[MMIO-DIAG] POLL END: gpa=0x{:x} page_offset=0x{:x} \
+                                     was read {} times, last_data=0x{:x}",
+                                    last.get(), last.get() & 0xFFF,
+                                    count.get(), last_data.get(),
+                                );
+                            }
+                            last.set(gpa);
+                            count.set(1);
+                            last_data.set(data_val);
+                        }
+                    });
+                });
+            });
         }
 
         Ok(())
