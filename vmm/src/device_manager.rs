@@ -1428,6 +1428,9 @@ impl DeviceManager {
     ) -> DeviceManagerResult<()> {
         trace_scoped!("create_devices");
 
+        #[cfg(not(target_arch = "riscv64"))]
+        let create_devices_start = Instant::now();
+
         self.cpu_manager
             .lock()
             .unwrap()
@@ -1454,6 +1457,8 @@ impl DeviceManager {
             }
         }
 
+        #[cfg(not(target_arch = "riscv64"))]
+        let step_start = Instant::now();
         #[cfg(target_arch = "x86_64")]
         self.add_legacy_devices(
             self.reset_evt
@@ -1463,7 +1468,11 @@ impl DeviceManager {
 
         #[cfg(target_arch = "aarch64")]
         self.add_legacy_devices(legacy_interrupt_manager.as_ref())?;
+        #[cfg(not(target_arch = "riscv64"))]
+        info!("[TIMING] create_devices: add_legacy_devices took {:?}", step_start.elapsed());
 
+        #[cfg(not(target_arch = "riscv64"))]
+        let step_start = Instant::now();
         {
             self.ged_notification_device = self.add_acpi_devices(
                 legacy_interrupt_manager.as_ref(),
@@ -1475,14 +1484,20 @@ impl DeviceManager {
                     .map_err(DeviceManagerError::EventFd)?,
             )?;
         }
+        #[cfg(not(target_arch = "riscv64"))]
+        info!("[TIMING] create_devices: add_acpi_devices took {:?}", step_start.elapsed());
 
         self.original_termios_opt = original_termios_opt;
 
+        #[cfg(not(target_arch = "riscv64"))]
+        let step_start = Instant::now();
         self.console = self.add_console_devices(
             legacy_interrupt_manager.as_ref(),
             console_info,
             console_resize_pipe,
         )?;
+        #[cfg(not(target_arch = "riscv64"))]
+        info!("[TIMING] create_devices: add_console_devices took {:?}", step_start.elapsed());
 
         #[cfg(not(target_arch = "riscv64"))]
         if let Some(tpm) = self.config.clone().lock().unwrap().tpm.as_ref() {
@@ -1492,8 +1507,17 @@ impl DeviceManager {
         }
         self.legacy_interrupt_manager = Some(legacy_interrupt_manager);
 
+        #[cfg(not(target_arch = "riscv64"))]
+        let step_start = Instant::now();
         self.make_virtio_devices()?;
+        #[cfg(not(target_arch = "riscv64"))]
+        info!("[TIMING] create_devices: make_virtio_devices took {:?}", step_start.elapsed());
+
+        #[cfg(not(target_arch = "riscv64"))]
+        let step_start = Instant::now();
         self.add_pci_devices()?;
+        #[cfg(not(target_arch = "riscv64"))]
+        info!("[TIMING] create_devices: add_pci_devices took {:?}", step_start.elapsed());
 
         // Add pvmemcontrol if required
         #[cfg(feature = "pvmemcontrol")]
@@ -1514,6 +1538,9 @@ impl DeviceManager {
         if let Some(ivshmem) = self.config.clone().lock().unwrap().ivshmem.as_ref() {
             self.ivshmem_device = self.add_ivshmem_device(ivshmem)?;
         }
+
+        #[cfg(not(target_arch = "riscv64"))]
+        info!("[TIMING] create_devices: total took {:?}", create_devices_start.elapsed());
 
         Ok(())
     }
@@ -1603,6 +1630,8 @@ impl DeviceManager {
 
     #[allow(unused_variables)]
     fn add_pci_devices(&mut self) -> DeviceManagerResult<()> {
+        #[cfg(not(target_arch = "riscv64"))]
+        let pci_start = Instant::now();
         let iommu_id = String::from(IOMMU_DEVICE_NAME);
 
         let iommu_address_width_bits =
@@ -1644,6 +1673,8 @@ impl DeviceManager {
 
         let mut iommu_attached_devices = Vec::new();
         {
+            #[cfg(not(target_arch = "riscv64"))]
+            let virtio_pci_start = Instant::now();
             for handle in self.virtio_devices.clone() {
                 let mapping: Option<Arc<IommuMapping>> = if handle.iommu {
                     self.iommu_mapping.clone()
@@ -1651,6 +1682,8 @@ impl DeviceManager {
                     None
                 };
 
+                #[cfg(not(target_arch = "riscv64"))]
+                let dev_start = Instant::now();
                 let dev_id = self.add_virtio_pci_device(
                     handle.virtio_device,
                     &mapping,
@@ -1658,6 +1691,8 @@ impl DeviceManager {
                     handle.pci_segment,
                     handle.dma_handler,
                 )?;
+                #[cfg(not(target_arch = "riscv64"))]
+                info!("[TIMING] add_pci_devices: add_virtio_pci_device '{}' took {:?}", handle.id, dev_start.elapsed());
 
                 // Track device BDF for Generic Initiator support
                 self.device_id_to_bdf.insert(handle.id.clone(), dev_id);
@@ -1666,12 +1701,22 @@ impl DeviceManager {
                     iommu_attached_devices.push(dev_id);
                 }
             }
+            #[cfg(not(target_arch = "riscv64"))]
+            info!("[TIMING] add_pci_devices: all virtio PCI devices took {:?}", virtio_pci_start.elapsed());
 
+            #[cfg(not(target_arch = "riscv64"))]
+            let vfio_start = Instant::now();
             let mut vfio_iommu_device_ids = self.add_vfio_devices()?;
             iommu_attached_devices.append(&mut vfio_iommu_device_ids);
+            #[cfg(not(target_arch = "riscv64"))]
+            info!("[TIMING] add_pci_devices: add_vfio_devices took {:?}", vfio_start.elapsed());
 
+            #[cfg(not(target_arch = "riscv64"))]
+            let user_start = Instant::now();
             let mut vfio_user_iommu_device_ids = self.add_user_devices()?;
             iommu_attached_devices.append(&mut vfio_user_iommu_device_ids);
+            #[cfg(not(target_arch = "riscv64"))]
+            info!("[TIMING] add_pci_devices: add_user_devices took {:?}", user_start.elapsed());
 
             // Add all devices from forced iommu segments
             if let Some(platform_config) = self.config.lock().unwrap().platform.as_ref()
@@ -1703,6 +1748,9 @@ impl DeviceManager {
             self.bus_devices
                 .push(Arc::clone(&segment.pci_config_mmio) as Arc<dyn BusDeviceSync>);
         }
+
+        #[cfg(not(target_arch = "riscv64"))]
+        info!("[TIMING] add_pci_devices: total took {:?}", pci_start.elapsed());
 
         Ok(())
     }
@@ -2544,10 +2592,24 @@ impl DeviceManager {
     }
 
     fn make_virtio_devices(&mut self) -> DeviceManagerResult<()> {
+        #[cfg(not(target_arch = "riscv64"))]
+        let step_start = Instant::now();
         // Create "standard" virtio devices (net/block/rng)
         self.make_virtio_block_devices()?;
+        #[cfg(not(target_arch = "riscv64"))]
+        info!("[TIMING] make_virtio_devices: block devices took {:?}", step_start.elapsed());
+
+        #[cfg(not(target_arch = "riscv64"))]
+        let step_start = Instant::now();
         self.make_virtio_net_devices()?;
+        #[cfg(not(target_arch = "riscv64"))]
+        info!("[TIMING] make_virtio_devices: net devices took {:?}", step_start.elapsed());
+
+        #[cfg(not(target_arch = "riscv64"))]
+        let step_start = Instant::now();
         self.make_virtio_rng_devices()?;
+        #[cfg(not(target_arch = "riscv64"))]
+        info!("[TIMING] make_virtio_devices: rng devices took {:?}", step_start.elapsed());
 
         // Add generic vhost-user if required
         self.make_generic_vhost_user_devices()?;
@@ -2559,7 +2621,11 @@ impl DeviceManager {
         self.make_virtio_pmem_devices()?;
 
         // Add virtio-vsock if required
+        #[cfg(not(target_arch = "riscv64"))]
+        let step_start = Instant::now();
         self.make_virtio_vsock_devices()?;
+        #[cfg(not(target_arch = "riscv64"))]
+        info!("[TIMING] make_virtio_devices: vsock devices took {:?}", step_start.elapsed());
 
         self.make_virtio_mem_devices()?;
 
@@ -3786,6 +3852,8 @@ impl DeviceManager {
                 "[MMIO-DIAG] add_passthrough_device: no passthrough_device yet, creating for path={}",
                 device_cfg.path.display()
             );
+            #[cfg(not(target_arch = "riscv64"))]
+            let pt_start = Instant::now();
             self.passthrough_device = Some(
                 self.address_manager
                     .vm
@@ -3798,6 +3866,8 @@ impl DeviceManager {
                         DeviceManagerError::CreatePassthroughDevice(e.into())
                     })?,
             );
+            #[cfg(not(target_arch = "riscv64"))]
+            info!("[TIMING] add_passthrough_device: create_passthrough_device took {:?}", pt_start.elapsed());
             info!("[MMIO-DIAG] add_passthrough_device: passthrough_device created successfully");
         } else {
             info!(
@@ -3828,6 +3898,8 @@ impl DeviceManager {
         &mut self,
         device_cfg: &mut DeviceConfig,
     ) -> DeviceManagerResult<(PciBdf, String)> {
+        #[cfg(not(target_arch = "riscv64"))]
+        let vfio_total_start = Instant::now();
         let vfio_name = if let Some(id) = &device_cfg.id {
             id.clone()
         } else {
@@ -3887,13 +3959,19 @@ impl DeviceManager {
             vfio_container
         };
 
+        #[cfg(not(target_arch = "riscv64"))]
+        let step_start = Instant::now();
         let vfio_device = VfioDevice::new(&device_cfg.path, Arc::clone(&vfio_container))
             .map_err(DeviceManagerError::VfioCreate)?;
+        #[cfg(not(target_arch = "riscv64"))]
+        info!("[TIMING] add_vfio_device '{}': VfioDevice::new took {:?}", vfio_name, step_start.elapsed());
 
         if needs_dma_mapping {
             // Register DMA mapping in IOMMU.
             // Do not register virtio-mem regions, as they are handled directly by
             // virtio-mem device itself.
+            #[cfg(not(target_arch = "riscv64"))]
+            let dma_start = Instant::now();
             for (_, zone) in self.memory_manager.lock().unwrap().memory_zones().iter() {
                 for region in zone.regions() {
                     // vfio_dma_map is unsound and ought to be marked as unsafe
@@ -3911,6 +3989,8 @@ impl DeviceManager {
                     .map_err(DeviceManagerError::VfioDmaMap)?;
                 }
             }
+            #[cfg(not(target_arch = "riscv64"))]
+            info!("[TIMING] add_vfio_device '{}': DMA mapping took {:?}", vfio_name, dma_start.elapsed());
 
             let vfio_mapping = Arc::new(VfioDmaMapping::new(
                 Arc::clone(&vfio_container),
@@ -3947,6 +4027,8 @@ impl DeviceManager {
 
         let memory_manager = self.memory_manager.clone();
 
+        #[cfg(not(target_arch = "riscv64"))]
+        let step_start = Instant::now();
         let vfio_pci_device = VfioPciDevice::new(
             vfio_name.clone(),
             self.address_manager.vm.clone(),
@@ -3962,9 +4044,13 @@ impl DeviceManager {
             device_cfg.path.clone(),
         )
         .map_err(DeviceManagerError::VfioPciCreate)?;
+        #[cfg(not(target_arch = "riscv64"))]
+        info!("[TIMING] add_vfio_device '{}': VfioPciDevice::new took {:?}", vfio_name, step_start.elapsed());
 
         let vfio_pci_device = Arc::new(Mutex::new(vfio_pci_device));
 
+        #[cfg(not(target_arch = "riscv64"))]
+        let step_start = Instant::now();
         let new_resources = self.add_pci_device(
             vfio_pci_device.clone(),
             vfio_pci_device.clone(),
@@ -3972,12 +4058,18 @@ impl DeviceManager {
             pci_device_bdf,
             resources,
         )?;
+        #[cfg(not(target_arch = "riscv64"))]
+        info!("[TIMING] add_vfio_device '{}': add_pci_device took {:?}", vfio_name, step_start.elapsed());
 
+        #[cfg(not(target_arch = "riscv64"))]
+        let step_start = Instant::now();
         vfio_pci_device
             .lock()
             .unwrap()
             .map_mmio_regions()
             .map_err(DeviceManagerError::VfioMapRegion)?;
+        #[cfg(not(target_arch = "riscv64"))]
+        info!("[TIMING] add_vfio_device '{}': map_mmio_regions took {:?}", vfio_name, step_start.elapsed());
 
         info!(
             "[MMIO-DIAG] add_vfio_device: map_mmio_regions completed for bdf={}",
@@ -4007,6 +4099,9 @@ impl DeviceManager {
         // Track device ID → guest BDF mapping for Generic Initiator resolution
         self.device_id_to_bdf
             .insert(vfio_name.clone(), pci_device_bdf);
+
+        #[cfg(not(target_arch = "riscv64"))]
+        info!("[TIMING] add_vfio_device '{}': total took {:?}", vfio_name, vfio_total_start.elapsed());
 
         Ok((pci_device_bdf, vfio_name))
     }
@@ -4079,12 +4174,24 @@ impl DeviceManager {
                 "[MMIO-DIAG] add_vfio_devices: processing {} device(s)",
                 device_list_cfg.len()
             );
-            for device_cfg in device_list_cfg.iter_mut() {
+            for (idx, device_cfg) in device_list_cfg.iter_mut().enumerate() {
                 info!(
-                    "[MMIO-DIAG] add_vfio_devices: adding device path={}",
+                    "[MMIO-DIAG] add_vfio_devices: adding device [{}/{}] path={}",
+                    idx + 1,
+                    device_list_cfg.len(),
                     device_cfg.path.display()
                 );
+                #[cfg(not(target_arch = "riscv64"))]
+                let dev_start = Instant::now();
                 let (device_id, _) = self.add_passthrough_device(device_cfg)?;
+                #[cfg(not(target_arch = "riscv64"))]
+                info!(
+                    "[TIMING] add_vfio_devices: device [{}/{}] path={} took {:?}",
+                    idx + 1,
+                    device_list_cfg.len(),
+                    device_cfg.path.display(),
+                    dev_start.elapsed()
+                );
                 if device_cfg.iommu && self.iommu_device.is_some() {
                     iommu_attached_device_ids.push(device_id);
                 }
