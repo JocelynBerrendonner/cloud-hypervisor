@@ -4170,15 +4170,16 @@ impl DeviceManager {
         let mut devices = self.config.lock().unwrap().devices.take();
 
         if let Some(device_list_cfg) = &mut devices {
+            let num_devices = device_list_cfg.len();
             info!(
                 "[MMIO-DIAG] add_vfio_devices: processing {} device(s)",
-                device_list_cfg.len()
+                num_devices
             );
             for (idx, device_cfg) in device_list_cfg.iter_mut().enumerate() {
                 info!(
                     "[MMIO-DIAG] add_vfio_devices: adding device [{}/{}] path={}",
                     idx + 1,
-                    device_list_cfg.len(),
+                    num_devices,
                     device_cfg.path.display()
                 );
                 #[cfg(not(target_arch = "riscv64"))]
@@ -4188,7 +4189,7 @@ impl DeviceManager {
                 info!(
                     "[TIMING] add_vfio_devices: device [{}/{}] path={} took {:?}",
                     idx + 1,
-                    device_list_cfg.len(),
+                    num_devices,
                     device_cfg.path.display(),
                     dev_start.elapsed()
                 );
