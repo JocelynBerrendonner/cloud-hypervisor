@@ -1277,8 +1277,16 @@ impl VfioCommon {
 
             if self.interrupt.msix_table_accessed(region.index, offset) {
                 self.interrupt.msix_read_table(offset, data);
+                info!(
+                    "[VFIO-DIAG] read_bar RESULT (msix table): region={} offset=0x{:x} data={:02x?}",
+                    region.index, offset, &data[..std::cmp::min(data.len(), 8)],
+                );
             } else {
                 self.vfio_wrapper.region_read(region.index, offset, data);
+                info!(
+                    "[VFIO-DIAG] read_bar RESULT (region_read): region={} offset=0x{:x} data={:02x?}",
+                    region.index, offset, &data[..std::cmp::min(data.len(), 8)],
+                );
             }
         }
 
