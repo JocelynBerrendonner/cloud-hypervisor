@@ -1738,6 +1738,7 @@ impl VfioPciDevice {
     ///   as user memory regions.
     /// * `mem_slot` - The closure to return a memory slot.
     pub fn map_mmio_regions(&mut self) -> Result<(), VfioPciError> {
+        self.bar_probe("map-mmio-pre");
         info!(
             "[MMIO-DIAG] map_mmio_regions: device={} bdf={}, num_regions={}",
             self.device_path.display(), self.bdf, self.common.mmio_regions.len()
@@ -1870,10 +1871,12 @@ impl VfioPciDevice {
         }
 
         info!("[MMIO-DIAG] map_mmio_regions: completed successfully for device={}", self.device_path.display());
+        self.bar_probe("map-mmio-post");
         Ok(())
     }
 
     pub fn unmap_mmio_regions(&mut self) {
+        self.bar_probe("unmap-mmio-pre");
         info!(
             "[MMIO-DIAG] unmap_mmio_regions: device={} bdf={}, num_regions={}",
             self.device_path.display(), self.bdf, self.common.mmio_regions.len()
@@ -1925,6 +1928,24 @@ impl VfioPciDevice {
                     .free_memory_slot(user_memory_region.slot);
             }
         }
+        self.bar_probe("unmap-mmio-post");
+    }
+
+    /// Read 4 bytes from BAR0 via VFIO region_read to check if the L0
+    /// hypervisor has mapped this device's BAR into our (L1) address space.
+    /// ALL-Fs (0xFFFFFFFF) means the BAR is not accessible.
+    fn bar_probe(&self, tag: &str) {
+        let mut data = [0u8; 4];
+        self.device.region_read(VFIO_PCI_BAR0_REGION_INDEX, &mut data, 0);
+        let val = u32::from_le_bytes(data);
+        info!(
+            "[BAR-PROBE] {}: {} bdf={} val=0x{:08x} {}",
+            tag,
+            self.device_path.display(),
+            self.bdf,
+            val,
+            if val == 0xFFFFFFFF { "ALL-Fs (UNREADABLE)" } else { "READABLE" },
+        );
     }
 
     pub fn mmio_regions(&self) -> Vec<MmioRegion> {

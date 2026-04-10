@@ -7,7 +7,9 @@
 mod test_util;
 
 use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::mpsc::channel;
 use std::{env, io};
@@ -481,6 +483,44 @@ fn get_cli_options_sorted(
     ].to_vec().into_boxed_slice()
 }
 
+/// Read BAR0 from PCI sysfs config space and log whether it's readable.
+/// `path` is the sysfs device path (e.g., /sys/bus/pci/devices/0000:00:08.0).
+fn sysfs_bar_probe(label: &str, path: &Path) {
+    let config_path = path.join("config");
+    match File::open(&config_path).and_then(|mut f| {
+        f.seek(SeekFrom::Start(0x10))?; // BAR0 offset in PCI config space
+        let mut buf = [0u8; 4];
+        f.read_exact(&mut buf)?;
+        Ok(u32::from_le_bytes(buf))
+    }) {
+        Ok(val) => {
+            let status = if val == 0xFFFFFFFF { "UNREADABLE" } else { "READABLE" };
+            info!(
+                "[BAR-PROBE] {}: device={} bar0=0x{:08x} {}",
+                label,
+                path.display(),
+                val,
+                status
+            );
+        }
+        Err(e) => {
+            warn!(
+                "[BAR-PROBE] {}: device={} failed to read config: {}",
+                label,
+                path.display(),
+                e
+            );
+        }
+    }
+}
+
+/// Probe BAR0 for all configured passthrough devices.
+fn probe_all_devices(label: &str, device_paths: &[PathBuf]) {
+    for path in device_paths {
+        sysfs_bar_probe(label, path);
+    }
+}
+
 /// Creates the CLI definition of Cloud Hypervisor.
 fn create_app(default_vcpus: String, default_memory: String, default_rng: String) -> Command {
     let groups = [
@@ -732,6 +772,8 @@ fn start_vmm(cmd_arguments: &ArgMatches) -> Result<Option<String>, Error> {
     )
     .map_err(Error::StartVmmThread)?;
 
+    let mut device_paths_for_probe: Vec<PathBuf> = Vec::new();
+
     let r: Result<(), Error> = (|| {
         #[cfg(feature = "igvm")]
         let payload_present = cmd_arguments.contains_id("kernel")
@@ -744,6 +786,15 @@ fn start_vmm(cmd_arguments: &ArgMatches) -> Result<Option<String>, Error> {
         if payload_present {
             let vm_params = VmParams::from_arg_matches(cmd_arguments);
             let vm_config = VmConfig::parse(vm_params).map_err(Error::ParsingConfig)?;
+
+            // Save device paths for BAR probing before and after VM lifetime.
+            device_paths_for_probe = vm_config
+                .devices
+                .as_ref()
+                .map(|devs| devs.iter().map(|d| d.path.clone()).collect())
+                .unwrap_or_default();
+
+            probe_all_devices("ch-pre-vfio-start", &device_paths_for_probe);
 
             // Create and boot the VM based off the VM config we just built.
             let sender = api_request_sender.clone();
@@ -788,6 +839,8 @@ fn start_vmm(cmd_arguments: &ArgMatches) -> Result<Option<String>, Error> {
         .join()
         .map_err(Error::ThreadJoin)?
         .map_err(Error::VmmThread)?;
+
+    probe_all_devices("ch-post-vfio-shutdown", &device_paths_for_probe);
 
     if let Some(api_handle) = vmm_thread_handle.http_api_handle {
         http_api_graceful_shutdown(api_handle).map_err(Error::HttpApiShutdown)?;
