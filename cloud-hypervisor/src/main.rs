@@ -121,6 +121,7 @@ enum FdTableError {
 struct Logger {
     output: Mutex<Box<dyn std::io::Write + Send>>,
     start: std::time::Instant,
+    start_wallclock: std::time::SystemTime,
 }
 
 impl log::Log for Logger {
@@ -137,6 +138,33 @@ impl log::Log for Logger {
         let duration = now.duration_since(self.start);
         let duration_s = duration.as_secs_f32();
 
+        // Compute wall-clock timestamp by adding elapsed duration to the saved start time.
+        let wallclock = self.start_wallclock + duration;
+        let wallclock_str = match wallclock.duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => {
+                let total_secs = d.as_secs();
+                let subsec_ms = d.subsec_millis();
+                let secs = (total_secs % 60) as u32;
+                let mins = ((total_secs / 60) % 60) as u32;
+                let hours = ((total_secs / 3600) % 24) as u32;
+                let days = (total_secs / 86400) as u64;
+                // Compute date from days since epoch (civil calendar).
+                // Algorithm from Howard Hinnant's chrono-compatible date library.
+                let z = days as i64 + 719468;
+                let era = if z >= 0 { z } else { z - 146096 } / 146097;
+                let doe = (z - era * 146097) as u64;
+                let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+                let y = yoe as i64 + era * 400;
+                let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+                let mp = (5 * doy + 2) / 153;
+                let d = doy - (153 * mp + 2) / 5 + 1;
+                let m = if mp < 10 { mp + 3 } else { mp - 9 };
+                let y = if m <= 2 { y + 1 } else { y };
+                format!("{y:04}-{m:02}-{d:02}T{hours:02}:{mins:02}:{secs:02}.{subsec_ms:03}Z")
+            }
+            Err(_) => "????-??-??T??:??:??.???Z".to_string(),
+        };
+
         let location = if let (Some(file), Some(line)) = (record.file(), record.line()) {
             format!("{file}:{line}")
         } else {
@@ -146,8 +174,7 @@ impl log::Log for Logger {
         let mut out = self.output.lock().unwrap();
         write!(
             &mut *out,
-            // 10: 6 decimal places + sep => whole seconds in range `0..=999` properly aligned
-            "cloud-hypervisor: {:>10.6?}s: <{}> {}:{} -- {}\r\n",
+            "cloud-hypervisor: {wallclock_str} {:>10.6?}s: <{}> {}:{} -- {}\r\n",
             duration_s,
             std::thread::current().name().unwrap_or("anonymous"),
             record.level(),
@@ -563,6 +590,7 @@ fn start_vmm(cmd_arguments: &ArgMatches) -> Result<Option<String>, Error> {
     log::set_boxed_logger(Box::new(Logger {
         output: Mutex::new(log_file),
         start: std::time::Instant::now(),
+        start_wallclock: std::time::SystemTime::now(),
     }))
     .map(|()| log::set_max_level(log_level))
     .map_err(Error::LoggerSetup)?;

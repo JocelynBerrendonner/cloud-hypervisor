@@ -1345,6 +1345,38 @@ impl VfioCommon {
             reg_idx, reg_idx * 4, offset, data,
         );
 
+        // MMIO-DIAG: Track MSE (Memory Space Enable) bit changes on command register writes.
+        if reg_idx == crate::configuration::COMMAND_REG {
+            let old_cmd = self.vfio_wrapper.read_config_dword(
+                (crate::configuration::COMMAND_REG * 4) as u32,
+            );
+            let old_mse = old_cmd & crate::configuration::COMMAND_REG_MEMORY_SPACE_MASK != 0;
+            // Reconstruct the new command register value from the write data and offset.
+            let mut new_cmd_bytes = old_cmd.to_le_bytes();
+            let off = offset as usize;
+            for (i, &b) in data.iter().enumerate() {
+                if off + i < 4 {
+                    new_cmd_bytes[off + i] = b;
+                }
+            }
+            let new_cmd = u32::from_le_bytes(new_cmd_bytes);
+            let new_mse = new_cmd & crate::configuration::COMMAND_REG_MEMORY_SPACE_MASK != 0;
+            if old_mse != new_mse {
+                info!(
+                    "[MMIO-DIAG] *** MSE BIT CHANGED: {} -> {} (cmd 0x{:08x} -> 0x{:08x})",
+                    if old_mse { "ENABLED" } else { "DISABLED" },
+                    if new_mse { "ENABLED" } else { "DISABLED" },
+                    old_cmd, new_cmd,
+                );
+            } else {
+                info!(
+                    "[MMIO-DIAG] MSE bit unchanged ({}), cmd write 0x{:08x} -> 0x{:08x}",
+                    if old_mse { "ENABLED" } else { "DISABLED" },
+                    old_cmd, new_cmd,
+                );
+            }
+        }
+
         // When the guest wants to write to a BAR, we trap it into
         // our local configuration space. We're not reprogramming
         // VFIO device.
@@ -1641,6 +1673,19 @@ impl VfioPciDevice {
             bdf,
             device_path,
         };
+
+        // MMIO-DIAG: Log the initial MSE bit state from the physical device.
+        let init_cmd = vfio_pci_device.common.vfio_wrapper.read_config_dword(
+            (crate::configuration::COMMAND_REG * 4) as u32,
+        );
+        let init_mse = init_cmd & crate::configuration::COMMAND_REG_MEMORY_SPACE_MASK != 0;
+        info!(
+            "[MMIO-DIAG] VfioPciDevice::new: initial PCI command=0x{:08x} MSE={} ({})",
+            init_cmd,
+            if init_mse { 1 } else { 0 },
+            if init_mse { "ENABLED" } else { "DISABLED" },
+        );
+        vfio_pci_device.bar_probe("new-initial-mse");
 
         Ok(vfio_pci_device)
     }
@@ -2046,7 +2091,14 @@ impl PciDevice for VfioPciDevice {
         offset: u64,
         data: &[u8],
     ) -> (Vec<BarReprogrammingParams>, Option<Arc<Barrier>>) {
-        self.common.write_config_register(reg_idx, offset, data)
+        if reg_idx == crate::configuration::COMMAND_REG {
+            self.bar_probe("cmd-write-pre");
+        }
+        let result = self.common.write_config_register(reg_idx, offset, data);
+        if reg_idx == crate::configuration::COMMAND_REG {
+            self.bar_probe("cmd-write-post");
+        }
+        result
     }
 
     fn read_config_register(&mut self, reg_idx: usize) -> u32 {
