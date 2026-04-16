@@ -1648,7 +1648,7 @@ impl VfioPciDevice {
             id, bdf, iommu_attached, device_path.display(), x_nv_gpudirect_clique,
         );
         let device = Arc::new(device);
-        device.reset();
+        //device.reset();
 
         let vfio_wrapper = VfioDeviceWrapper::new(Arc::clone(&device));
 
