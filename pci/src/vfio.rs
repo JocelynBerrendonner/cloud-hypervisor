@@ -1467,7 +1467,7 @@ impl VfioPciDevice {
         device_path: PathBuf,
     ) -> Result<Self, VfioPciError> {
         let device = Arc::new(device);
-        device.reset();
+        //device.reset();
 
         let vfio_wrapper = VfioDeviceWrapper::new(Arc::clone(&device));
 
