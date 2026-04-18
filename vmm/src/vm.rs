@@ -586,6 +586,7 @@ impl Vm {
         });
 
         // Create CPU manager
+        let t = Instant::now();
         let cpu_manager = Self::create_cpu_manager(
             &config,
             vm.clone(),
@@ -598,12 +599,14 @@ impl Vm {
             vm_ops,
             &numa_nodes,
         )?;
+        info!("[MMIO-DIAG] new_from_memory_manager: create_cpu_manager() took {:?}", t.elapsed());
 
         // Perform hypervisor-specific TDX initialization if enabled
         #[cfg(feature = "tdx")]
         Self::init_tdx_if_enabled(&config, &vm, &cpu_manager)?;
 
         // Create device manager
+        let t = Instant::now();
         let device_manager = Self::create_device_manager(
             io_bus,
             mmio_bus,
@@ -622,8 +625,10 @@ impl Vm {
             timestamp,
             snapshot,
         )?;
+        info!("[MMIO-DIAG] new_from_memory_manager: create_device_manager() took {:?}", t.elapsed());
 
         // Perform hypervisor-specific initialization
+        let t = Instant::now();
         let load_payload_handle = Self::hypervisor_specific_init(
             &vm,
             &memory_manager,
@@ -636,6 +641,7 @@ impl Vm {
             &original_termios,
             snapshot,
         )?;
+        info!("[MMIO-DIAG] new_from_memory_manager: hypervisor_specific_init() took {:?}", t.elapsed());
 
         // Load kernel and initramfs files
         #[cfg(feature = "tdx")]
@@ -870,7 +876,9 @@ impl Vm {
         // MSHV-specific initialization (non-aarch64)
         #[cfg(all(feature = "mshv", not(target_arch = "aarch64")))]
         if is_mshv {
+            let t = Instant::now();
             vm.init().map_err(Error::InitializeVm)?;
+            info!("[MMIO-DIAG] hypervisor_specific_init: vm.init() (MSHV_INITIALIZE_PARTITION) took {:?}", t.elapsed());
         }
 
         // SEV-SNP specific initialization
@@ -892,6 +900,7 @@ impl Vm {
         // MSHV initialization (create interrupt controller and devices)
         #[cfg(feature = "mshv")]
         if is_mshv {
+            let t = Instant::now();
             Self::init_mshv(
                 vm,
                 device_manager,
@@ -899,14 +908,19 @@ impl Vm {
                 console_resize_pipe,
                 original_termios,
             )?;
+            info!("[MMIO-DIAG] hypervisor_specific_init: init_mshv() took {:?}", t.elapsed());
         }
 
         // Allocate address space for non-SEV-SNP guests
-        memory_manager
-            .lock()
-            .unwrap()
-            .allocate_address_space()
-            .map_err(Error::MemoryManager)?;
+        {
+            let t = Instant::now();
+            memory_manager
+                .lock()
+                .unwrap()
+                .allocate_address_space()
+                .map_err(Error::MemoryManager)?;
+            info!("[MMIO-DIAG] hypervisor_specific_init: allocate_address_space() took {:?}", t.elapsed());
+        }
 
         // Add UEFI flash for aarch64
         #[cfg(target_arch = "aarch64")]
@@ -918,24 +932,31 @@ impl Vm {
 
         // Load payload asynchronously
         let load_payload_handle = if snapshot.is_none() {
-            Self::load_payload_async(
+            let t = Instant::now();
+            let h = Self::load_payload_async(
                 memory_manager,
                 config,
                 #[cfg(feature = "igvm")]
                 cpu_manager,
                 #[cfg(feature = "sev_snp")]
                 false,
-            )?
+            )?;
+            info!("[MMIO-DIAG] hypervisor_specific_init: load_payload_async() took {:?}", t.elapsed());
+            h
         } else {
             None
         };
 
         // Create boot vCPUs
-        cpu_manager
-            .lock()
-            .unwrap()
-            .create_boot_vcpus(snapshot_from_id(snapshot, CPU_MANAGER_SNAPSHOT_ID))
-            .map_err(Error::CpuManager)?;
+        {
+            let t = Instant::now();
+            cpu_manager
+                .lock()
+                .unwrap()
+                .create_boot_vcpus(snapshot_from_id(snapshot, CPU_MANAGER_SNAPSHOT_ID))
+                .map_err(Error::CpuManager)?;
+            info!("[MMIO-DIAG] hypervisor_specific_init: create_boot_vcpus() took {:?}", t.elapsed());
+        }
 
         // KVM-specific initialization
         #[cfg(feature = "kvm")]
@@ -1026,15 +1047,18 @@ impl Vm {
         console_resize_pipe: Option<&Arc<File>>,
         original_termios: &Arc<Mutex<Option<termios>>>,
     ) -> Result<()> {
+        let t = Instant::now();
         let ic = device_manager
             .lock()
             .unwrap()
             .create_interrupt_controller()
             .map_err(Error::DeviceManager)?;
+        info!("[MMIO-DIAG] init_mshv: create_interrupt_controller() took {:?}", t.elapsed());
 
         #[cfg(target_arch = "aarch64")]
         _vm.init().map_err(Error::InitializeVm)?;
 
+        let t = Instant::now();
         device_manager
             .lock()
             .unwrap()
@@ -1045,6 +1069,7 @@ impl Vm {
                 ic,
             )
             .map_err(Error::DeviceManager)?;
+        info!("[MMIO-DIAG] init_mshv: create_devices() took {:?}", t.elapsed());
 
         Ok(())
     }
@@ -1288,10 +1313,12 @@ impl Vm {
             vm_config.lock().unwrap().is_tdx_enabled()
         };
 
+        let t = Instant::now();
         let vm = Self::create_hypervisor_vm(
             hypervisor.as_ref(),
             vm_config.as_ref().lock().unwrap().deref().into(),
         )?;
+        info!("[MMIO-DIAG] Vm::new: create_hypervisor_vm() took {:?}", t.elapsed());
 
         #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
         if vm_config.lock().unwrap().max_apic_id() > MAX_SUPPORTED_CPUS_LEGACY {
@@ -1303,6 +1330,7 @@ impl Vm {
             vm_config.lock().unwrap().cpus.max_phys_bits,
         );
 
+        let t = Instant::now();
         let memory_manager =
             if let Some(snapshot) = snapshot_from_id(snapshot, MEMORY_MANAGER_SNAPSHOT_ID) {
                 MemoryManager::new_from_snapshot(
@@ -1329,6 +1357,7 @@ impl Vm {
                 )
                 .map_err(Error::MemoryManager)?
             };
+        info!("[MMIO-DIAG] Vm::new: MemoryManager::new() took {:?}", t.elapsed());
 
         Vm::new_from_memory_manager(
             vm_config,
