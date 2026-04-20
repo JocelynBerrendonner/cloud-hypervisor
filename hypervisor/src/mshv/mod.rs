@@ -2448,6 +2448,8 @@ impl vm::Vm for MshvVm {
     }
 
     fn init(&self) -> vm::Result<()> {
+        let t_init_total = std::time::Instant::now();
+
         #[cfg(target_arch = "aarch64")]
         {
             self.fd
@@ -2484,9 +2486,11 @@ impl vm::Vm for MshvVm {
                 })?;
         }
 
+        let t = std::time::Instant::now();
         self.fd
             .initialize()
             .map_err(|e| vm::HypervisorVmError::InitializeVm(e.into()))?;
+        info!("[INIT-DIAG] fd.initialize() (MSHV_INITIALIZE_PARTITION ioctl) took {:?}", t.elapsed());
 
         // Set additional partition property for SEV-SNP partition.
         #[cfg(feature = "sev_snp")]
@@ -2523,23 +2527,32 @@ impl vm::Vm for MshvVm {
         // writes from the guest and return zero in attempt to read unimplemented
         // MSR.
         #[cfg(target_arch = "x86_64")]
-        self.fd
-            .set_partition_property(
-                hv_partition_property_code_HV_PARTITION_PROPERTY_UNIMPLEMENTED_MSR_ACTION,
-                hv_unimplemented_msr_action_HV_UNIMPLEMENTED_MSR_ACTION_IGNORE_WRITE_READ_ZERO
-                    as u64,
-            )
-            .map_err(|e| vm::HypervisorVmError::InitializeVm(e.into()))?;
+        {
+            let t = std::time::Instant::now();
+            self.fd
+                .set_partition_property(
+                    hv_partition_property_code_HV_PARTITION_PROPERTY_UNIMPLEMENTED_MSR_ACTION,
+                    hv_unimplemented_msr_action_HV_UNIMPLEMENTED_MSR_ACTION_IGNORE_WRITE_READ_ZERO
+                        as u64,
+                )
+                .map_err(|e| vm::HypervisorVmError::InitializeVm(e.into()))?;
+            info!("[INIT-DIAG] set UNIMPLEMENTED_MSR_ACTION took {:?}", t.elapsed());
+        }
 
         // Always create a frozen partition
-        self.fd
-            .set_partition_property(
-                hv_partition_property_code_HV_PARTITION_PROPERTY_TIME_FREEZE,
-                1u64,
-            )
-            .map_err(|e| vm::HypervisorVmError::InitializeVm(e.into()))?;
+        {
+            let t = std::time::Instant::now();
+            self.fd
+                .set_partition_property(
+                    hv_partition_property_code_HV_PARTITION_PROPERTY_TIME_FREEZE,
+                    1u64,
+                )
+                .map_err(|e| vm::HypervisorVmError::InitializeVm(e.into()))?;
+            info!("[INIT-DIAG] set TIME_FREEZE took {:?}", t.elapsed());
+        }
         #[cfg(target_arch = "x86_64")]
         {
+            let t = std::time::Instant::now();
             let msr_list = self
                 .fd
                 .get_msr_index_list()
@@ -2554,7 +2567,9 @@ impl vm::Vm for MshvVm {
                 msrs[pos].index = *index;
             }
             self.msrs.store(Arc::new(msrs));
+            info!("[INIT-DIAG] get_msr_index_list ({} MSRs) took {:?}", msr_list.len(), t.elapsed());
         }
+        info!("[INIT-DIAG] init() total took {:?}", t_init_total.elapsed());
         Ok(())
     }
 }
