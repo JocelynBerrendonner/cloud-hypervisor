@@ -831,6 +831,8 @@ fn http_api_thread_rules() -> Result<Vec<(i64, Vec<SeccompRule>)>, BackendError>
         (libc::SYS_accept4, vec![]),
         (libc::SYS_brk, vec![]),
         (libc::SYS_clock_gettime, vec![]),
+        (libc::SYS_clone, vec![]),
+        (libc::SYS_clone3, vec![]),
         (libc::SYS_close, vec![]),
         (libc::SYS_dup, vec![]),
         (libc::SYS_epoll_create1, vec![]),
@@ -852,7 +854,15 @@ fn http_api_thread_rules() -> Result<Vec<(i64, Vec<SeccompRule>)>, BackendError>
         (libc::SYS_prctl, vec![]),
         (libc::SYS_recvfrom, vec![]),
         (libc::SYS_recvmsg, vec![]),
+        // rseq syscall: musl is missing the libc constant; hardcode by arch number.
+        #[cfg(target_arch = "x86_64")]
+        (334, vec![]),
+        #[cfg(target_arch = "aarch64")]
+        (293, vec![]),
+        (libc::SYS_sched_getaffinity, vec![]),
         (libc::SYS_sched_yield, vec![]),
+        (libc::SYS_sendmsg, vec![]),
+        (libc::SYS_set_robust_list, vec![]),
         (libc::SYS_sigaltstack, vec![]),
         (libc::SYS_write, vec![]),
         (libc::SYS_rt_sigprocmask, vec![]),
