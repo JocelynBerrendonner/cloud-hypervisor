@@ -429,13 +429,33 @@ impl hypervisor::Hypervisor for MshvHypervisor {
     ///
     /// Get the supported CpuID
     ///
+    /// MSHV does not expose a KVM_GET_SUPPORTED_CPUID equivalent, so for the
+    /// CPUID leaves that CH overrides via `register_intercept_result_cpuid`
+    /// (leaf 0x1 and leaf 0xb today) we seed the entries from the host
+    /// CPUID. Otherwise those leaves would be returned to the guest with
+    /// all-zero EAX/EBX/ECX/EDX, which strips the feature bits below SSE2
+    /// (e.g. PNI/SSE3, SSSE3, SSE4.1, SSE4.2) and breaks userspace that
+    /// expects an x86-64-v2 baseline (NumPy, glibc HWCAPS, ...).
+    ///
+    /// `arch::generate_common_cpuid()` and `arch::configure_vcpu()` will
+    /// still patch the hypervisor/x2APIC/HTT/MTRR bits on top of these
+    /// host-seeded values before they are handed to MSHV.
     fn get_supported_cpuid(&self) -> hypervisor::Result<Vec<CpuIdEntry>> {
+        use std::arch::x86_64::__cpuid_count;
         let mut cpuid = Vec::new();
         let functions: [u32; 2] = [0x1, 0xb];
 
         for function in functions {
+            // SAFETY: __cpuid_count is called with valid leaves that are
+            // architecturally defined on every x86_64 CPU CH supports.
+            let leaf = unsafe { __cpuid_count(function, 0) };
             cpuid.push(CpuIdEntry {
                 function,
+                index: 0,
+                eax: leaf.eax,
+                ebx: leaf.ebx,
+                ecx: leaf.ecx,
+                edx: leaf.edx,
                 ..Default::default()
             });
         }
